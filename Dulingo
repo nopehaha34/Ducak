@@ -1,0 +1,1818 @@
+--[[
+    FUR OUTBREAK v3
+    Tabs: Main | Skip | Item | Fur | Human | How to Setup | Logs update
+]]
+
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UIS          = game:GetService("UserInputService")
+local LP           = Players.LocalPlayer
+
+local env = (getgenv and getgenv()) or _G
+if env.CosmosCleanup then pcall(env.CosmosCleanup) end
+
+---------------------------------------------------------------- CONFIG
+local CFG = {
+    Heresy = { Speed = 32,   Hitbox = 18 },
+    Pro    = { Speed = 29.3, Hitbox = 12 },
+    ProPlayer = { Hitbox = 8.4, IdleSpeed = 16.5, RunSpeed = 28.4, JumpCooldown = 1.5, NoSwing = true },
+    Extreme   = { Speed = 32, Hitbox = 24, JumpPower = 65, Gravity = 121, NoSwing = true },
+    AutoAttackRange = 11,    -- studs (Auto attack)
+    BloxyLoopPos = Vector3.new(-218.77252197265625, 9.111939430236816, -728.3845825195312),
+    BloxyLoopRadius = 30,    -- studs: closer than this the lock icon disappears
+    GrabCFrame = CFrame.new(-216.380325, 9.07193089, -733.97876, 0.0504965186, 0, 0.998724222, 0, 1, 0, -0.998724222, 0, 0.0504965186),
+    GetInterval = 0.1,       -- seconds between Instant get prompt fires
+    SwingRange = 8,          -- studs
+    SwingDelay = 0.12,       -- seconds between swings
+    DashSpeed    = 100,
+    DashDistance = 18,       -- studs (dash time = 18 / 100 = 0.18s)
+    DashCooldown = 4,        -- seconds
+    FollowStop = 1,          -- follow right up to the player's body (ignores their hitbox)
+    TeleportDelay = 2,       -- seconds between the smoke and the teleport
+    NpcHitbox = 18,
+    PathLifetime = 12,       -- seconds a green path stays visible (Check Move)
+    StunPullDistance = 4,    -- studs: how far back one frame must move you to count as an anti-cheat pull
+    DiscordLink = "https://discord.gg/5m4pWbvTB6",
+    BloxyCooldown = 3,       -- seconds
+    BloxyGap = 0.3,          -- seconds between the Bloxiade swing and equipping Bloxy Cola
+    BloxyFinishDelay = 0.3,  -- seconds after the Bloxy Cola swing before unequip + re-equip original
+    PickupRange = 40,        -- studs
+    PickupKeywords = {},     -- e.g. {"pick", "take"}; empty = every prompt in range
+    PickupSkip = { "WearOn" }, -- workspace children whose prompts Auto pickup never triggers
+    TreatNoTeamAsEnemy = false, -- true = in games without teams everyone counts as enemy
+}
+
+---------------------------------------------------------------- HELPERS
+local conns = {}
+local function track(c) conns[#conns + 1] = c return c end
+
+local function make(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+local function corner(o, r) return make("UICorner", { CornerRadius = r or UDim.new(0, 10) }, o) end
+local function stroke(o, color, thick, tr)
+    return make("UIStroke", {
+        Color = color, Thickness = thick or 1, Transparency = tr or 0,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, o)
+end
+
+local C = {
+    bg1    = Color3.fromRGB(16, 8, 44),
+    bg2    = Color3.fromRGB(3, 8, 30),
+    row    = Color3.fromRGB(34, 22, 78),
+    off    = Color3.fromRGB(58, 46, 104),
+    purple = Color3.fromRGB(150, 90, 255),
+    cyan   = Color3.fromRGB(0, 225, 255),
+    pink   = Color3.fromRGB(255, 95, 200),
+    text   = Color3.fromRGB(235, 232, 255),
+    dark   = Color3.fromRGB(5, 10, 35),
+}
+
+---------------------------------------------------------------- GUI ROOT
+local gui = make("ScreenGui", {
+    Name = "FurOutbreakV3", ResetOnSpawn = false, IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999,
+})
+local okParent = pcall(function()
+    gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+end)
+if not okParent or not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+
+local function makeDraggable(target, handle, canDrag, onEnd)
+    local dragging, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        local t = input.UserInputType
+        if (t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch)
+            and (not canDrag or canDrag()) then
+            dragging, dragStart, startPos = true, input.Position, target.Position
+            local con
+            con = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    con:Disconnect()
+                    if onEnd then onEnd() end
+                end
+            end)
+        end
+    end)
+    local conn = track(UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                        startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end))
+    return conn
+end
+
+---------------------------------------------------------------- PANEL
+local PANEL_W, PANEL_H = 300, 322
+local panel = make("Frame", {
+    Name = "Panel", Size = UDim2.fromOffset(PANEL_W, PANEL_H),
+    Position = UDim2.new(0, 16, 0.5, -PANEL_H / 2),
+    BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ClipsDescendants = true,
+}, gui)
+corner(panel, UDim.new(0, 16))
+make("UIGradient", { Color = ColorSequence.new(C.bg1, C.bg2), Rotation = 65 }, panel)
+
+local panelStroke = stroke(panel, Color3.new(1, 1, 1), 2, 0)
+local strokeGrad = make("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.purple),
+        ColorSequenceKeypoint.new(0.5, C.cyan),
+        ColorSequenceKeypoint.new(1, C.pink),
+    }),
+}, panelStroke)
+track(RunService.RenderStepped:Connect(function(dt)
+    strokeGrad.Rotation = (strokeGrad.Rotation + 45 * dt) % 360
+end))
+
+-- planet
+local planet = make("Frame", {
+    Size = UDim2.fromOffset(100, 100), Position = UDim2.new(1, -62, 1, -62),
+    BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.45,
+    BorderSizePixel = 0, ZIndex = 1,
+}, panel)
+corner(planet, UDim.new(1, 0))
+make("UIGradient", { Color = ColorSequence.new(C.pink, C.cyan), Rotation = 35 }, planet)
+
+-- stars
+local rng = Random.new()
+for _ = 1, 34 do
+    local s = rng:NextNumber(1, 2.6)
+    local star = make("Frame", {
+        Size = UDim2.fromOffset(s, s),
+        Position = UDim2.new(rng:NextNumber(), 0, rng:NextNumber(), 0),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = rng:NextNumber(0.1, 0.7),
+        BorderSizePixel = 0, ZIndex = 1,
+    }, panel)
+    corner(star, UDim.new(1, 0))
+    TweenService:Create(star, TweenInfo.new(rng:NextNumber(0.8, 2.4), Enum.EasingStyle.Sine,
+        Enum.EasingDirection.InOut, -1, true), { BackgroundTransparency = 0.95 }):Play()
+end
+
+-- title bar
+local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, ZIndex = 5 }, panel)
+local title = make("TextLabel", {
+    Size = UDim2.new(1, -90, 1, 0), Position = UDim2.fromOffset(14, 0), BackgroundTransparency = 1,
+    Text = "Fur outbreak v3", Font = Enum.Font.GothamBlack, TextSize = 17,
+    TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.new(1, 1, 1), ZIndex = 5,
+}, titleBar)
+make("UIGradient", { Color = ColorSequence.new(C.cyan, C.pink) }, title)
+makeDraggable(panel, titleBar)
+
+local function smallBtn(text, x)
+    local b = make("TextButton", {
+        Size = UDim2.fromOffset(26, 22), Position = UDim2.new(1, x, 0, 8),
+        BackgroundColor3 = C.row, BackgroundTransparency = 0.2, Text = text,
+        Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text,
+        AutoButtonColor = false, ZIndex = 6,
+    }, titleBar)
+    corner(b, UDim.new(0, 7))
+    return b
+end
+local btnMin   = smallBtn("-", -64)
+local btnClose = smallBtn("X", -34)
+
+-- tabs + pages
+local tabBar = make("ScrollingFrame", {
+    Size = UDim2.new(1, -24, 0, 28), Position = UDim2.fromOffset(12, 40),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 5,
+    ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X,
+    CanvasSize = UDim2.new(), ScrollBarThickness = 0,
+}, panel)
+make("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, tabBar)
+
+local pages, tabs = {}, {}
+local function showTab(name)
+    for n, p in pairs(pages) do p.Visible = (n == name) end
+    for n, t in pairs(tabs) do
+        local on = (n == name)
+        TweenService:Create(t, TweenInfo.new(0.15), {
+            BackgroundColor3 = on and C.purple or C.row,
+            TextColor3 = on and Color3.new(1, 1, 1) or C.text,
+        }):Play()
+    end
+end
+local function newTab(name, order)
+    local t = make("TextButton", {
+        Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = C.row,
+        Text = name, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text,
+        AutoButtonColor = false, LayoutOrder = order, ZIndex = 5,
+    }, tabBar)
+    make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, t)
+    corner(t, UDim.new(0, 8))
+    local p = make("ScrollingFrame", {
+        Name = name .. "Page", Size = UDim2.new(1, -24, 1, -82), Position = UDim2.fromOffset(12, 76),
+        BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false, ZIndex = 3,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = C.purple,
+    }, panel)
+    make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, p)
+    make("UIPadding", {
+        PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 6),
+    }, p)
+    tabs[name], pages[name] = t, p
+    t.Activated:Connect(function() showTab(name) end)
+    return p
+end
+local pageMain = newTab("Main", 1)
+local pageSkip = newTab("Skip", 2)
+local pageItem = newTab("Item", 3)
+local pageVisual = newTab("Fur", 4)
+local pageHuman = newTab("Human", 5)
+local pageSetup = newTab("How to Setup", 6)
+local pageLogs = newTab("Logs update", 7)
+
+---------------------------------------------------------------- ROW BUILDER
+local function makeRow(parent, text, pillText, withLock, order)
+    local holder = make("Frame", {
+        Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, LayoutOrder = order, ZIndex = 3,
+    }, parent)
+    local btn = make("TextButton", {
+        Size = UDim2.new(1, withLock and -68 or 0, 1, 0), BackgroundColor3 = C.row,
+        BackgroundTransparency = 0.2, Text = "", AutoButtonColor = false, ZIndex = 4,
+    }, holder)
+    corner(btn)
+    local st = stroke(btn, C.purple, 1.2, 0.35)
+    make("TextLabel", {
+        Size = UDim2.new(1, -70, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+        Text = text, Font = Enum.Font.GothamBold, TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.text, ZIndex = 5,
+    }, btn)
+    local pill = make("TextLabel", {
+        Size = UDim2.fromOffset(46, 22), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -8, 0.5, 0), BackgroundColor3 = C.off, Text = pillText,
+        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, ZIndex = 5,
+    }, btn)
+    corner(pill, UDim.new(1, 0))
+
+    local row = { Button = btn }
+    function row.SetOn(on)
+        pill.Text = on and "ON" or "OFF"
+        TweenService:Create(pill, TweenInfo.new(0.15), {
+            BackgroundColor3 = on and C.cyan or C.off,
+            TextColor3 = on and C.dark or C.text,
+        }):Play()
+        TweenService:Create(st, TweenInfo.new(0.15), {
+            Color = on and C.cyan or C.purple, Transparency = on and 0 or 0.35,
+        }):Play()
+    end
+    function row.Flash(txt, dur)
+        pill.Text = txt
+        task.delay(dur or 1, function() if pill.Parent then pill.Text = pillText end end)
+    end
+    if withLock then
+        local lock = make("TextButton", {
+            Size = UDim2.fromOffset(60, 40), AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C.row, BackgroundTransparency = 0.2,
+            Text = "Move", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.pink,
+            AutoButtonColor = false, ZIndex = 4,
+        }, holder)
+        corner(lock)
+        stroke(lock, C.pink, 1.2, 0.35)
+        row.Lock = lock
+    end
+    return row
+end
+local function setLockText(row, locked)
+    row.Lock.Text = locked and "Locked" or "Move"
+    row.Lock.TextColor3 = locked and C.cyan or C.pink
+end
+
+---------------------------------------------------------------- DROPDOWN
+-- multi-select dropdown with a search box; getItems() returns { { key = "...", text = "..." }, ... }
+local function makeDropdown(parent, title, order, getItems)
+    local selected = {}
+    local isOpen = false
+    local CLOSED_H, OPEN_H = 40, 40 + 6 + 30 + 6 + 120
+    local holder = make("Frame", {
+        Size = UDim2.new(1, 0, 0, CLOSED_H), BackgroundTransparency = 1, LayoutOrder = order,
+        ClipsDescendants = true, ZIndex = 4,
+    }, parent)
+    local head = make("TextButton", {
+        Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, BackgroundTransparency = 0.2,
+        Text = "", AutoButtonColor = false, ZIndex = 5,
+    }, holder)
+    corner(head)
+    stroke(head, C.purple, 1.2, 0.35)
+    local label = make("TextLabel", {
+        Size = UDim2.new(1, -44, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+        Text = title, Font = Enum.Font.GothamBold, TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.text, ZIndex = 6,
+    }, head)
+    local arrow = make("TextLabel", {
+        Size = UDim2.fromOffset(24, 40), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 0),
+        BackgroundTransparency = 1, Text = "v", Font = Enum.Font.GothamBold, TextSize = 14,
+        TextColor3 = C.cyan, ZIndex = 6,
+    }, head)
+    local search = make("TextBox", {
+        Size = UDim2.new(1, 0, 0, 30), Position = UDim2.fromOffset(0, 46), BackgroundColor3 = C.row,
+        BackgroundTransparency = 0.2, Text = "", PlaceholderText = "Search name",
+        PlaceholderColor3 = Color3.fromRGB(140, 130, 190), Font = Enum.Font.GothamBold, TextSize = 13,
+        TextColor3 = C.text, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+    }, holder)
+    corner(search, UDim.new(0, 8))
+    make("UIPadding", { PaddingLeft = UDim.new(0, 10) }, search)
+    local list = make("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 0, 120), Position = UDim2.fromOffset(0, 82), BackgroundTransparency = 1,
+        BorderSizePixel = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = C.purple, ZIndex = 5,
+    }, holder)
+    make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+    local function count()
+        local n = 0
+        for _ in pairs(selected) do n = n + 1 end
+        return n
+    end
+    local function updateLabel()
+        local n = count()
+        label.Text = (n > 0) and (title .. " (" .. n .. ")") or title
+    end
+
+    local function rebuild()
+        for _, ch in ipairs(list:GetChildren()) do
+            if not ch:IsA("UIListLayout") then ch:Destroy() end
+        end
+        local q = string.lower(search.Text)
+        local n = 0
+        for _, item in ipairs(getItems()) do
+            if q == "" or string.find(string.lower(item.text), q, 1, true) then
+                n = n + 1
+                local on = selected[item.key] == true
+                local b = make("TextButton", {
+                    Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = on and C.purple or C.row,
+                    BackgroundTransparency = on and 0.1 or 0.3, Text = item.text,
+                    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text,
+                    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+                    AutoButtonColor = false, LayoutOrder = n, ZIndex = 6,
+                }, list)
+                corner(b, UDim.new(0, 7))
+                make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 8) }, b)
+                b.Activated:Connect(function()
+                    if selected[item.key] then selected[item.key] = nil else selected[item.key] = true end
+                    local nowOn = selected[item.key] == true
+                    b.BackgroundColor3 = nowOn and C.purple or C.row
+                    b.BackgroundTransparency = nowOn and 0.1 or 0.3
+                    updateLabel()
+                end)
+            end
+        end
+        if n == 0 then
+            make("TextLabel", {
+                Size = UDim2.new(1, -6, 0, 26), BackgroundTransparency = 1, Text = "Nothing to show",
+                Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = Color3.fromRGB(170, 165, 220), ZIndex = 6,
+            }, list)
+        end
+    end
+
+    head.Activated:Connect(function()
+        isOpen = not isOpen
+        arrow.Text = isOpen and "^" or "v"
+        holder.Size = UDim2.new(1, 0, 0, isOpen and OPEN_H or CLOSED_H)
+        if isOpen then rebuild() end
+    end)
+    search:GetPropertyChangedSignal("Text"):Connect(function()
+        if isOpen then rebuild() end
+    end)
+
+    return {
+        Holder = holder,
+        Selected = selected,
+        Refresh = function() if isOpen then rebuild() end end,
+    }
+end
+
+---------------------------------------------------------------- FLOATING CIRCLES
+-- circle positions are saved to a file (needs writefile / readfile in your executor)
+local HttpService = game:GetService("HttpService")
+local SAVE_FILE = "CosmosUI_positions.json"
+local savedPos = {}
+local circles = {}
+pcall(function()
+    if isfile and readfile and isfile(SAVE_FILE) then
+        local data = HttpService:JSONDecode(readfile(SAVE_FILE))
+        if type(data) == "table" then savedPos = data end
+    end
+end)
+local function savePositions()
+    pcall(function()
+        if writefile then writefile(SAVE_FILE, HttpService:JSONEncode(savedPos)) end
+    end)
+end
+
+local function makeCircle(label, pos, accent, activeLabel)
+    local default = pos
+    local s = savedPos[label]
+    if type(s) == "table" and #s == 4 then
+        pos = UDim2.new(s[1], s[2], s[3], s[4])
+    end
+    local c = make("TextButton", {
+        Name = label .. "Circle", Size = UDim2.fromOffset(66, 66), Position = pos,
+        BackgroundColor3 = Color3.new(1, 1, 1), Text = label, Font = Enum.Font.GothamBlack,
+        TextSize = 12, TextColor3 = Color3.new(1, 1, 1), TextStrokeTransparency = 0.6,
+        AutoButtonColor = false, Visible = false, ZIndex = 20,
+    }, gui)
+    corner(c, UDim.new(1, 0))
+    local grad = make("UIGradient", { Color = ColorSequence.new(C.purple, C.bg2), Rotation = 45 }, c)
+    local st = stroke(c, accent, 2.5, 0)
+    local o = { Button = c, Locked = false }
+    makeDraggable(c, c, function() return not o.Locked end, function()
+        local p = c.Position
+        savedPos[label] = { p.X.Scale, p.X.Offset, p.Y.Scale, p.Y.Offset }
+        savePositions()
+    end)
+    function o.ResetPosition()
+        c.Position = default
+        savedPos[label] = nil
+    end
+    circles[#circles + 1] = o
+    function o.Refresh()
+        c.BackgroundTransparency = o.Ghost and 0.85 or (o.Locked and 0 or 0.45)
+        c.TextTransparency = o.Ghost and 0.7 or 0
+        c.TextStrokeTransparency = o.Ghost and 1 or 0.6
+        st.Transparency = o.Ghost and 0.8 or (o.Locked and 0 or 0.5)
+    end
+    function o.SetLocked(l)
+        o.Locked = l
+        o.Refresh()
+    end
+    function o.SetGhost(g)
+        o.Ghost = g
+        o.Refresh()
+    end
+    function o.SetActive(a)
+        grad.Color = a and ColorSequence.new(accent, C.purple) or ColorSequence.new(C.purple, C.bg2)
+        c.Text = a and (activeLabel or label) or label
+    end
+    o.SetLocked(false)
+    return o
+end
+
+local isEnemy -- defined in the game logic below
+
+---------------------------------------------------------------- BUILD ROWS
+local rows = {
+    Heresy = makeRow(pageMain, "Speed Hitbox", "OFF", false, 1),
+    Pro    = makeRow(pageMain, "Pro", "OFF", false, 2),
+}
+local rowDash = makeRow(pageMain, "Dash", "OFF", true, 3)
+local rowDel  = makeRow(pageMain, "Delete bug", "RUN", false, 4)
+local rowReset = makeRow(pageMain, "Reset skill", "RUN", false, 5)
+local rowFollow = makeRow(pageSkip, "Follow player", "OFF", true, 1)
+local rowTP     = makeRow(pageSkip, "Run teleport", "OFF", true, 2)
+local rowNpc    = makeRow(pageSkip, "NPC hitbox", "OFF", false, 3)
+local rowPath   = makeRow(pageSkip, "Check Move", "OFF", false, 4)
+local rowDelJump = makeRow(pageSkip, "Delete cooldown jump", "RUN", false, 5)
+
+local rowPickup = makeRow(pageItem, "Auto pickup", "OFF", false, 1)
+local rowBypass = makeRow(pageItem, "Bypass stun AC", "OFF", false, 2)
+local rowBloxy  = makeRow(pageItem, "Bloxy combo", "OFF", true, 3)
+
+-- Human tab
+rows.ProPlayer = makeRow(pageHuman, "Pro Player", "OFF", false, 1)
+rows.Extreme   = makeRow(pageHuman, "Extreme Hitbox", "OFF", false, 2)
+local rowAuto   = makeRow(pageHuman, "Auto attack", "OFF", false, 3)
+local rowBxLoop = makeRow(pageHuman, "Bloxy loop", "OFF", true, 4)
+local rowGrab   = makeRow(pageHuman, "Instant grab", "OFF", true, 5)
+-- every different name inside workspace.PickItem, one entry per name, multi-select
+local pickDrop = makeDropdown(pageHuman, "Items", 6, function()
+    local items, seen = {}, {}
+    local folder = workspace:FindFirstChild("PickItem")
+    if folder then
+        for _, ch in ipairs(folder:GetChildren()) do
+            if not seen[ch.Name] then
+                seen[ch.Name] = true
+                items[#items + 1] = { key = ch.Name, text = ch.Name }
+            end
+        end
+    end
+    table.sort(items, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
+    return items
+end)
+local rowGet    = makeRow(pageHuman, "Instant get", "OFF", false, 7)
+
+-- Logs update tab
+make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 130), BackgroundTransparency = 1, ZIndex = 4, RichText = true,
+    TextWrapped = true, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    Text = "<b><font color=\"#00e1ff\">Update 3.21</font></b>\n+Grab fast\n+ Get item fast\n+ pro Player use you can't get reports reason explotit\n+ More.",
+}, pageLogs)
+
+-- Fur tab: whitelist dropdown (other-team players only, multi-select, search) + ESP
+local wlDrop = makeDropdown(pageVisual, "Whitelist", 1, function()
+    local items = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) then
+            local text = (p.DisplayName == p.Name) and p.Name or (p.DisplayName .. " (@" .. p.Name .. ")")
+            items[#items + 1] = { key = p.Name, text = text }
+        end
+    end
+    table.sort(items, function(a, b) return string.lower(a.text) < string.lower(b.text) end)
+    return items
+end)
+local rowEsp = makeRow(pageVisual, "ESP", "OFF", false, 3)
+
+local rowDiscord = makeRow(pageSetup, "Copy Discord", "COPY", false, 1)
+local rowBook = makeRow(pageSetup, "Book", "OPEN", false, 3)
+make("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1, LayoutOrder = 2, ZIndex = 4,
+    Text = "Cre @NormalPlayer-o8z", Font = Enum.Font.GothamBold, TextSize = 15,
+    TextColor3 = C.pink, TextXAlignment = Enum.TextXAlignment.Center,
+}, pageSetup)
+
+local dashCircle   = makeCircle("DASH", UDim2.new(1, -110, 0.55, 0), C.pink)
+local followCircle = makeCircle("FOLLOW", UDim2.new(1, -110, 0.35, 0), C.cyan, "STOP")
+local tpCircle     = makeCircle("TP", UDim2.new(1, -110, 0.75, 0), Color3.fromRGB(255, 190, 70))
+local bloxyCircle  = makeCircle("BLOXY", UDim2.new(1, -190, 0.55, 0), Color3.fromRGB(110, 255, 170))
+local bxLoopCircle = makeCircle("BLOXYLOOP", UDim2.new(1, -270, 0.55, 0), Color3.fromRGB(255, 220, 90))
+local grabCircle   = makeCircle("GRAB", UDim2.new(1, -270, 0.35, 0), Color3.fromRGB(130, 200, 255))
+bxLoopCircle.Button.Text, bxLoopCircle.Button.TextSize = "\u{1F512}", 26
+
+---------------------------------------------------------------- GAME LOGIC
+local state = { Heresy = false, Pro = false, ProPlayer = false, Extreme = false }
+local followActive = false
+local bypassIgnoreUntil = 0 -- own dashes / teleports must not count as anti-cheat pulls
+local origSpeed
+local saved = setmetatable({}, { __mode = "k" }) -- hrp -> original props
+
+local function getHum() local c = LP.Character return c and c:FindFirstChildOfClass("Humanoid") end
+local function getHRP() local c = LP.Character return c and c:FindFirstChild("HumanoidRootPart") end
+
+function isEnemy(p)
+    if p == LP then return false end
+    if p.Team == nil and LP.Team == nil then return CFG.TreatNoTeamAsEnemy end
+    return p.Team ~= LP.Team
+end
+
+local function alive(p)
+    local c = p.Character
+    local hum = c and c:FindFirstChildOfClass("Humanoid")
+    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+    if hum and hrp and hum.Health > 0 then return hum, hrp end
+end
+
+-- whitelist: the players picked in the Fur tab dropdown are never auto-swung
+local function isWhitelisted(p)
+    return wlDrop.Selected[p.Name] == true
+end
+
+local function nearestEnemy(myHrp, skipWhitelisted)
+    local best, bestHrp, bestD = nil, nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) and not (skipWhitelisted and isWhitelisted(p)) then
+            local _, hrp = alive(p)
+            if hrp then
+                local d = (hrp.Position - myHrp.Position).Magnitude
+                if d < bestD then best, bestHrp, bestD = p, hrp, d end
+            end
+        end
+    end
+    return best, bestHrp, bestD
+end
+
+local MODE_ORDER = { "Heresy", "Pro", "ProPlayer", "Extreme" } -- these four turn each other off
+local function activeMode()
+    for _, m in ipairs(MODE_ORDER) do
+        if state[m] then return m end
+    end
+end
+
+local function applyHitbox(size)
+    local s = Vector3.new(size, size, size)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) then
+            local _, hrp = alive(p)
+            if hrp then
+                if not saved[hrp] then
+                    saved[hrp] = { Size = hrp.Size, Transparency = hrp.Transparency, CanCollide = hrp.CanCollide }
+                end
+                if hrp.Size ~= s then hrp.Size = s end
+                hrp.Transparency = 0.8
+                hrp.CanCollide = false
+            end
+        end
+    end
+end
+
+local function restoreFrom(tbl)
+    for hrp, d in pairs(tbl) do
+        if hrp and hrp.Parent then
+            hrp.Size, hrp.Transparency, hrp.CanCollide = d.Size, d.Transparency, d.CanCollide
+        end
+        tbl[hrp] = nil
+    end
+end
+local function restoreHitbox() restoreFrom(saved) end
+
+-- SWING: uses the tool you are holding. If your game swings through a remote,
+-- put that remote call in here instead.
+local function swing()
+    local char = LP.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then pcall(function() tool:Activate() end) end
+end
+
+-- helpers for Pro Player (RunSystem speed + jump cooldown) and Extreme Hitbox (jump power + gravity)
+local MX = { extreme = false }
+
+function MX.isRunning()
+    if not (MX.runValue and MX.runValue.Parent) then
+        local ok, inst = pcall(function() return LP.PlayerGui.RunSystem.Run.Running end)
+        MX.runValue = ok and inst or nil
+    end
+    return MX.runValue ~= nil and MX.runValue.Value == true
+end
+
+function MX.clearJumpGuard()
+    if MX.jumpConn then
+        MX.jumpConn:Disconnect()
+        MX.jumpConn = nil
+    end
+    if MX.jumpHum then
+        local h = MX.jumpHum
+        MX.jumpHum = nil
+        pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true) end)
+    end
+end
+
+-- after every jump the Jumping state is switched off for 1.5s
+function MX.jumpGuard(hum)
+    if MX.jumpHum == hum then return end
+    MX.clearJumpGuard()
+    MX.jumpHum = hum
+    MX.jumpConn = hum.StateChanged:Connect(function(_, new)
+        if new == Enum.HumanoidStateType.Jumping then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false) end)
+            task.delay(CFG.ProPlayer.JumpCooldown, function()
+                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true) end)
+            end)
+        end
+    end)
+end
+
+function MX.applyExtreme(hum)
+    local cfg = CFG.Extreme
+    if not MX.extreme then
+        MX.extreme = true
+        MX.origJump, MX.origUseJump, MX.origGravity = hum.JumpPower, hum.UseJumpPower, workspace.Gravity
+    end
+    if not hum.UseJumpPower then hum.UseJumpPower = true end
+    if hum.JumpPower ~= cfg.JumpPower then hum.JumpPower = cfg.JumpPower end
+    if workspace.Gravity ~= cfg.Gravity then workspace.Gravity = cfg.Gravity end
+end
+
+function MX.restoreExtreme()
+    if not MX.extreme then return end
+    MX.extreme = false
+    local hum = getHum()
+    if hum and MX.origJump then
+        hum.UseJumpPower = MX.origUseJump
+        hum.JumpPower = MX.origJump
+    end
+    if MX.origGravity then workspace.Gravity = MX.origGravity end
+end
+
+local function setMode(name, on)
+    state[name] = on
+    if on then
+        for _, other in ipairs(MODE_ORDER) do
+            if other ~= name then
+                state[other] = false
+                rows[other].SetOn(false)
+            end
+        end
+    end
+    rows[name].SetOn(on)
+
+    local mode = activeMode()
+    if mode ~= "ProPlayer" then MX.clearJumpGuard() end
+    if mode ~= "Extreme" then MX.restoreExtreme() end
+
+    if mode then
+        if origSpeed == nil then
+            local hum = getHum()
+            origSpeed = hum and hum.WalkSpeed or 16
+        end
+    else
+        restoreHitbox()
+        local hum = getHum()
+        if hum then hum.WalkSpeed = origSpeed or 16 end
+        origSpeed = nil
+    end
+end
+
+-- Dash (18 studs at speed 100, 4s cooldown)
+local dashing = false
+local dashReadyAt = 0
+local function dash()
+    if dashing or os.clock() < dashReadyAt then return end
+    local hrp = getHRP()
+    if not hrp then return end
+    dashing = true
+    dashReadyAt = os.clock() + CFG.DashCooldown
+    bypassIgnoreUntil = os.clock() + CFG.DashDistance / CFG.DashSpeed + 0.8
+
+    local dashTime = CFG.DashDistance / CFG.DashSpeed
+    local goal = hrp.CFrame + hrp.CFrame.LookVector * CFG.DashDistance
+    local tw = TweenService:Create(hrp, TweenInfo.new(dashTime, Enum.EasingStyle.Linear), { CFrame = goal })
+    tw:Play()
+
+    task.spawn(function() -- swing while dashing
+        local t0 = os.clock()
+        repeat
+            swing()
+            task.wait(CFG.SwingDelay)
+        until os.clock() - t0 >= dashTime
+    end)
+
+    task.spawn(function() -- cooldown countdown on the circle
+        local btn = dashCircle.Button
+        while os.clock() < dashReadyAt and btn.Parent do
+            btn.Text = string.format("%.1f", dashReadyAt - os.clock())
+            task.wait(0.1)
+        end
+        if btn.Parent then btn.Text = "DASH" end
+    end)
+
+    tw.Completed:Wait()
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    dashing = false
+end
+
+-- Follow
+local function setFollowActive(a)
+    followActive = a
+    followCircle.SetActive(a)
+    if not a then
+        local hum, hrp = getHum(), getHRP()
+        if hum and hrp then hum:MoveTo(hrp.Position) end
+    end
+end
+local function setFollowEnabled(on)
+    rowFollow.SetOn(on)
+    followCircle.Button.Visible = on
+    if not on then setFollowActive(false) end
+end
+
+-- Run teleport
+local TP = {
+    Human = CFrame.new(-78.4544373, 3.91744709, -987.610718,
+        -0.590096712, 0, 0.807332516, 0, 1, 0, -0.807332516, 0, -0.590096712),
+    Infected = CFrame.new(-218.772522, 9.11193943, -728.384583,
+        0.65720737, 0, 0.753709853, 0, 1, 0, -0.753709853, 0, 0.65720737),
+}
+
+local PURPLE = Color3.fromRGB(170, 70, 255)
+
+local function recolor(inst)
+    local function one(o)
+        pcall(function()
+            if o:IsA("ParticleEmitter") or o:IsA("Beam") or o:IsA("Trail") then
+                o.Color = ColorSequence.new(PURPLE)
+            elseif o:IsA("Light") then
+                o.Color = PURPLE
+            elseif o:IsA("Sparkles") then
+                o.SparkleColor = PURPLE
+            elseif o:IsA("Fire") then
+                o.Color, o.SecondaryColor = PURPLE, PURPLE
+            elseif o:IsA("Smoke") then
+                o.Color = PURPLE
+            elseif o:IsA("BasePart") then
+                o.Color = PURPLE
+            end
+        end)
+    end
+    one(inst)
+    for _, d in ipairs(inst:GetDescendants()) do one(d) end
+end
+
+-- Lightning effect copied from the Crucible blade, recolored purple
+local function findLightning()
+    local ok, inst = pcall(function()
+        return workspace.PickItem.Crucible.Crucible.WeldParts.Blade.Lightning
+    end)
+    if ok and inst then
+        local c = inst:Clone()
+        recolor(c)
+        return c
+    end
+end
+local lightningTemplate = findLightning()
+
+local function addLightning(part, cf, emitters, template)
+    if not template then
+        lightningTemplate = lightningTemplate or findLightning()
+        template = lightningTemplate
+    end
+    if not template then return end
+    local fx = template:Clone()
+    local all = { fx }
+    for _, d in ipairs(fx:GetDescendants()) do all[#all + 1] = d end
+    for _, o in ipairs(all) do
+        if o:IsA("ParticleEmitter") then
+            o.Enabled = true
+            emitters[#emitters + 1] = o
+            pcall(function() o:Emit(15) end)
+        elseif o:IsA("Beam") then
+            local a0, a1 = o.Attachment0, o.Attachment1
+            local internal = a0 and a1
+                and (a0 == fx or a0:IsDescendantOf(fx)) and (a1 == fx or a1:IsDescendantOf(fx))
+            if not internal then
+                o.Attachment0 = make("Attachment", { Position = Vector3.new(0, 0, 0) }, part)
+                o.Attachment1 = make("Attachment", { Position = Vector3.new(0, 7, 0) }, part)
+            end
+        elseif o:IsA("BasePart") then
+            o.Anchored, o.CanCollide, o.CanQuery, o.CanTouch = true, false, false, false
+        end
+    end
+    if fx:IsA("BasePart") then
+        fx.CFrame = cf
+    elseif fx:IsA("Model") then
+        fx:PivotTo(cf)
+    end
+    fx.Parent = part
+    return fx
+end
+
+local function smokePuff(cf, duration)
+    local part = make("Part", {
+        Name = "CosmosSmoke", Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false,
+        Transparency = 1, Size = Vector3.new(5, 1, 5), CFrame = cf,
+    }, workspace)
+    local pe = make("ParticleEmitter", {
+        Texture = "rbxasset://textures/particles/smoke_main.dds",
+        Color = ColorSequence.new(Color3.fromRGB(10, 6, 18), Color3.fromRGB(55, 30, 90)),
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.05),
+            NumberSequenceKeypoint.new(0.7, 0.35),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+        Size = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 6), NumberSequenceKeypoint.new(1, 20),
+        }),
+        Lifetime = NumberRange.new(1.6, 2.6),
+        Rate = 140,
+        Speed = NumberRange.new(3, 9),
+        SpreadAngle = Vector2.new(60, 60),
+        Rotation = NumberRange.new(0, 360),
+        RotSpeed = NumberRange.new(-60, 60),
+        EmissionDirection = Enum.NormalId.Top,
+    }, part)
+    pe:Emit(40)
+    local emitters = { pe }
+    addLightning(part, cf, emitters)
+    task.delay(duration, function()
+        for _, e in ipairs(emitters) do e.Enabled = false end
+    end)
+    task.delay(duration + 3, function() part:Destroy() end)
+end
+
+local tpBusy = false
+local function runTeleport()
+    if tpBusy then return end
+    local hrp = getHRP()
+    if not hrp then return end
+    tpBusy = true
+
+    local team = LP.Team
+    local dest = (team and team.Name == "Human") and TP.Human or TP.Infected
+
+    tpCircle.Button.Text = "..."
+    smokePuff(hrp.CFrame * CFrame.new(0, -1.5, 0), CFG.TeleportDelay)
+    task.wait(CFG.TeleportDelay)
+
+    local now = getHRP()
+    if now then
+        bypassIgnoreUntil = os.clock() + 1.5
+        now.CFrame = dest
+        now.AssemblyLinearVelocity = Vector3.zero
+        smokePuff(dest * CFrame.new(0, -1.5, 0), 0.8)
+    end
+    tpCircle.Button.Text = "TP"
+    tpBusy = false
+end
+
+-- Auto pickup
+local pickupOn = false
+local promptSet = {}
+local pickupConns = {}
+local lastFire = setmetatable({}, { __mode = "k" })
+local lastPickupScan = 0
+
+local function norm(s) return (string.lower(s):gsub("[^%w]", "")) end
+
+local function ownedTools()
+    local set = {}
+    local function scan(container)
+        if not container then return end
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then set[norm(t.Name)] = true end
+        end
+    end
+    scan(LP:FindFirstChildOfClass("Backpack"))
+    scan(LP.Character)
+    return set
+end
+
+-- names a prompt could be "for": its texts and the parent / grandparent names
+local function promptNames(pr)
+    local names = {}
+    local function add(s)
+        if type(s) == "string" and s ~= "" then names[#names + 1] = norm(s) end
+    end
+    add(pr.ObjectText)
+    add(pr.ActionText)
+    local p = pr.Parent
+    if p then
+        add(p.Name)
+        if p.Parent and p.Parent ~= workspace then add(p.Parent.Name) end
+    end
+    return names
+end
+
+local function alreadyOwned(pr, owned)
+    for _, n in ipairs(promptNames(pr)) do
+        if n ~= "" and owned[n] then return true end
+    end
+    return false
+end
+
+local function keywordOK(pr)
+    if #CFG.PickupKeywords == 0 then return true end
+    local text = string.lower(pr.ActionText .. " " .. pr.ObjectText .. " " .. (pr.Parent and pr.Parent.Name or ""))
+    for _, k in ipairs(CFG.PickupKeywords) do
+        if string.find(text, string.lower(k), 1, true) then return true end
+    end
+    return false
+end
+
+local function promptPosition(pr)
+    local p = pr.Parent
+    if not p then return end
+    if p:IsA("BasePart") then return p.Position end
+    if p:IsA("Attachment") then return p.WorldPosition end
+    if p:IsA("Model") then return p:GetPivot().Position end
+end
+
+local function firePrompt(pr)
+    task.spawn(function()
+        pcall(function()
+            pr.HoldDuration = 0
+            if fireproximityprompt then
+                fireproximityprompt(pr)
+            else
+                pr:InputHoldBegin()
+                task.wait()
+                pr:InputHoldEnd()
+            end
+        end)
+    end)
+end
+
+local function isSkipped(pr, roots)
+    for _, root in ipairs(roots) do
+        if pr:IsDescendantOf(root) then return true end
+    end
+    return false
+end
+
+local function pickupStep(myHrp)
+    local owned = ownedTools()
+    local now = os.clock()
+    local skipRoots = {}
+    for _, name in ipairs(CFG.PickupSkip) do
+        local f = workspace:FindFirstChild(name)
+        if f then skipRoots[#skipRoots + 1] = f end
+    end
+    for pr in pairs(promptSet) do
+        if pr.Parent and pr.Enabled and (now - (lastFire[pr] or 0)) >= 0.6
+            and not isSkipped(pr, skipRoots) then
+            local pos = promptPosition(pr)
+            if pos and (pos - myHrp.Position).Magnitude <= CFG.PickupRange
+                and not alreadyOwned(pr, owned) and keywordOK(pr) then
+                lastFire[pr] = now
+                firePrompt(pr)
+            end
+        end
+    end
+end
+
+local function setPickup(on)
+    pickupOn = on
+    rowPickup.SetOn(on)
+    for _, c in ipairs(pickupConns) do c:Disconnect() end
+    pickupConns = {}
+    promptSet = {}
+    if on then
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then promptSet[d] = true end
+        end
+        pickupConns[#pickupConns + 1] = workspace.DescendantAdded:Connect(function(d)
+            if d:IsA("ProximityPrompt") then promptSet[d] = true end
+        end)
+        pickupConns[#pickupConns + 1] = workspace.DescendantRemoving:Connect(function(d)
+            promptSet[d] = nil
+        end)
+    end
+end
+
+-- NPC hitbox
+local npcOn = false
+local npcSet = {}
+local npcConns = {}
+local savedNpc = setmetatable({}, { __mode = "k" })
+
+local function addNpc(h)
+    local m = h.Parent
+    if m and m:IsA("Model") then npcSet[m] = true end
+end
+
+local function applyNpcHitbox()
+    local s = Vector3.new(CFG.NpcHitbox, CFG.NpcHitbox, CFG.NpcHitbox)
+    for m in pairs(npcSet) do
+        if not m.Parent then
+            npcSet[m] = nil
+        elseif not Players:GetPlayerFromCharacter(m) then
+            local hum = m:FindFirstChildOfClass("Humanoid")
+            local hrp = m:FindFirstChild("HumanoidRootPart")
+            if hum and hrp and hum.Health > 0 then
+                if not savedNpc[hrp] then
+                    savedNpc[hrp] = { Size = hrp.Size, Transparency = hrp.Transparency, CanCollide = hrp.CanCollide }
+                end
+                if hrp.Size ~= s then hrp.Size = s end
+                hrp.Transparency = 0.8
+                hrp.CanCollide = false
+            end
+        end
+    end
+end
+
+local function setNpc(on)
+    npcOn = on
+    rowNpc.SetOn(on)
+    for _, c in ipairs(npcConns) do c:Disconnect() end
+    npcConns = {}
+    npcSet = {}
+    if on then
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("Humanoid") then addNpc(d) end
+        end
+        npcConns[#npcConns + 1] = workspace.DescendantAdded:Connect(function(d)
+            if d:IsA("Humanoid") then addNpc(d) end
+        end)
+        npcConns[#npcConns + 1] = workspace.DescendantRemoving:Connect(function(d)
+            if d:IsA("Humanoid") and d.Parent then npcSet[d.Parent] = nil end
+        end)
+    else
+        restoreFrom(savedNpc)
+    end
+end
+
+-- Check Move: green path behind every other-team player
+local pathOn = false
+local pathObjs = setmetatable({}, { __mode = "k" }) -- hrp -> { attachment0, attachment1, trail }
+local lastPathScan = 0
+local GREEN = Color3.fromRGB(60, 255, 90)
+
+local function destroyPath(hrp)
+    local o = pathObjs[hrp]
+    if o then
+        for _, i in ipairs(o) do pcall(function() i:Destroy() end) end
+        pathObjs[hrp] = nil
+    end
+end
+
+local function pathStep()
+    local current = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) then
+            local _, hrp = alive(p)
+            if hrp then
+                current[hrp] = true
+                local o = pathObjs[hrp]
+                if not (o and o[3].Parent) then
+                    local a0 = make("Attachment", { Name = "CosmosPath0", Position = Vector3.new(0, -2.4, 0) }, hrp)
+                    local a1 = make("Attachment", { Name = "CosmosPath1", Position = Vector3.new(0, -3, 0) }, hrp)
+                    local tr = make("Trail", {
+                        Name = "CosmosPath", Attachment0 = a0, Attachment1 = a1,
+                        Color = ColorSequence.new(GREEN), LightEmission = 1, FaceCamera = true,
+                        Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 0.7),
+                        }),
+                        Lifetime = math.clamp(CFG.PathLifetime, 0.1, 20), MinLength = 0.05,
+                    }, hrp)
+                    pathObjs[hrp] = { a0, a1, tr }
+                end
+            end
+        end
+    end
+    for hrp in pairs(pathObjs) do
+        if not current[hrp] then destroyPath(hrp) end
+    end
+end
+
+local function setPath(on)
+    pathOn = on
+    rowPath.SetOn(on)
+    if not on then
+        for hrp in pairs(pathObjs) do destroyPath(hrp) end
+    end
+end
+
+-- Bypass stun AC: running normally + pulled back by the anti-cheat
+-- -> equip any backpack tool, unequip after 0.3s
+local bypassOn = false
+local bypassBusy = false
+local bpHrp, bpPos, bpTime
+
+local function bypassStep(hum, myHrp)
+    local now = os.clock()
+    local pos = myHrp.Position
+    if bpHrp ~= myHrp then
+        bpHrp, bpPos, bpTime = myHrp, pos, now
+        return
+    end
+    local dt, delta = now - bpTime, pos - bpPos
+    bpPos, bpTime = pos, now
+    if bypassBusy or now < bypassIgnoreUntil or dt <= 0 then return end
+
+    local move = hum.MoveDirection
+    if move.Magnitude < 0.1 then return end -- only while running
+    local flat = Vector3.new(delta.X, 0, delta.Z)
+    local limit = hum.WalkSpeed * dt * 2 + CFG.StunPullDistance
+    if flat.Magnitude > limit and flat.Unit:Dot(move.Unit) < -0.2 then
+        bypassBusy = true
+        task.spawn(function()
+            local bp = LP:FindFirstChildOfClass("Backpack")
+            local tools = {}
+            if bp then
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then tools[#tools + 1] = t end
+                end
+            end
+            if #tools > 0 then
+                hum:EquipTool(tools[math.random(#tools)])
+                task.wait(0.3)
+                hum:UnequipTools()
+            end
+            task.wait(0.5)
+            bypassBusy = false
+        end)
+    end
+end
+
+local function setBypass(on)
+    bypassOn = on
+    rowBypass.SetOn(on)
+    bpHrp = nil
+end
+
+-- ESP: neon red boxes, always on top (visible through walls), other-team players only
+local espOn = false
+local espObjs = {} -- part -> BoxHandleAdornment
+local lastEspScan = 0
+local ESP_RED = Color3.fromRGB(255, 30, 30)
+
+local function destroyEsp(part)
+    local a = espObjs[part]
+    if a then pcall(function() a:Destroy() end) end
+    espObjs[part] = nil
+end
+
+local function espStep()
+    local current = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if isEnemy(p) and p.Character then
+            for _, part in ipairs(p.Character:GetDescendants()) do
+                -- the hitbox-enlarged HumanoidRootPart is skipped so no giant box shows up
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    current[part] = true
+                    local a = espObjs[part]
+                    if not (a and a.Parent) then
+                        espObjs[part] = make("BoxHandleAdornment", {
+                            Name = "CosmosESP", Adornee = part, Size = part.Size + Vector3.new(0.05, 0.05, 0.05),
+                            Color3 = ESP_RED, Transparency = 0.25, AlwaysOnTop = true, ZIndex = 10,
+                        }, part)
+                    end
+                end
+            end
+        end
+    end
+    for part in pairs(espObjs) do
+        if not current[part] then destroyEsp(part) end
+    end
+end
+
+local function setEsp(on)
+    espOn = on
+    rowEsp.SetOn(on)
+    if not on then
+        for part in pairs(espObjs) do destroyEsp(part) end
+    end
+end
+
+-- Bloxy combo: one run per tap, cooldown 3s
+-- unequip current tool -> Bloxiade + swing -> 0.3s -> Bloxy Cola + swing -> unequip -> re-equip original
+local bloxyBusy = false
+local bloxyReadyAt = 0
+
+-- one full Bloxy sequence (used by the Bloxy combo circle and by Bloxy loop)
+local function bloxySequence(hum, char, bp)
+    pcall(function()
+        local original = char:FindFirstChildOfClass("Tool")
+        hum:UnequipTools()
+        task.wait() -- let the tools go back to the backpack
+
+        local function useTool(name)
+            local t = bp:FindFirstChild(name)
+            if t and t:IsA("Tool") then
+                hum:EquipTool(t)
+                task.wait(0.05) -- let the tool finish equipping before swinging
+                swing()
+            end
+        end
+
+        useTool("Bloxiade")
+        task.wait(CFG.BloxyGap)
+        useTool("Bloxy Cola")
+        task.wait(CFG.BloxyFinishDelay)
+
+        hum:UnequipTools()
+        if original and original.Parent then
+            task.wait()
+            hum:EquipTool(original)
+        end
+    end)
+end
+
+local function bloxyCombo()
+    if bloxyBusy or os.clock() < bloxyReadyAt then return end
+    local hum, char = getHum(), LP.Character
+    local bp = LP:FindFirstChildOfClass("Backpack")
+    if not (hum and char and bp) then return end
+
+    bloxyBusy = true
+    bloxyReadyAt = os.clock() + CFG.BloxyCooldown
+
+    task.spawn(function() -- cooldown countdown on the circle
+        local btn = bloxyCircle.Button
+        while os.clock() < bloxyReadyAt and btn.Parent do
+            btn.Text = string.format("%.1f", bloxyReadyAt - os.clock())
+            task.wait(0.1)
+        end
+        if btn.Parent then btn.Text = "BLOXY" end
+    end)
+
+    bloxySequence(hum, char, bp)
+    bloxyBusy = false
+end
+
+-- Book: the functions of the script and how to use them (English), flip pages, delete
+local openBook, closeBook
+do
+    local PAGES = {
+        { "Getting started",
+          "- Tabs: Main, Skip, Item, Fur, Human, How to Setup, Logs update (swipe the tab bar sideways for more).\n" ..
+          "- Round buttons (Dash, Follow, TP, Bloxy, Bloxy loop, Grab): turn the row ON, drag the circle where you want it, press Move so it says Locked, then tap the circle to use it.\n" ..
+          "- Circle positions are saved. Reset skill (Main) puts them all back.\n" ..
+          "- \"-\" minimizes the panel, X closes it and turns everything off." },
+        { "Main tab",
+          "- Speed Hitbox: speed 32, enemy hitboxes 18, auto-swings your held tool when an enemy is within 8 studs.\n" ..
+          "- Pro: speed 29.3, hitboxes 12, same auto-swing.\n" ..
+          "- Speed Hitbox, Pro, Pro Player and Extreme Hitbox turn each other off.\n" ..
+          "- Dash: round button. Dashes 18 studs forward and swings. Cooldown 4s.\n" ..
+          "- Delete bug: removes the top bar. Reset skill: circles back to their default spots." },
+        { "Skip tab",
+          "- Follow player: round button. Tap to chase the nearest enemy up close, tap again to stop.\n" ..
+          "- Run teleport: round button. Smoke for 2s, then you teleport (Human and Infected go to different spots).\n" ..
+          "- NPC hitbox: NPC hitboxes become 18.\n" ..
+          "- Check Move: a green trail follows every enemy. Turn it off to clear it.\n" ..
+          "- Delete cooldown jump: deletes your JumpCooldown." },
+        { "Item tab",
+          "- Auto pickup: triggers every prompt within 40 studs. Skips tools you already own and anything inside WearOn.\n" ..
+          "- Bypass stun AC: if the anti-cheat pulls you back while you run, a random backpack tool is equipped, then unequipped after 0.3s.\n" ..
+          "- Bloxy combo: round button. Bloxiade swing, 0.3s later Bloxy Cola swing, then your old tool comes back. Cooldown 3s." },
+        { "Fur tab",
+          "- Whitelist: a dropdown with a search box. It lists other-team players only; tick as many as you want. Whitelisted players are never auto-swung by Speed Hitbox, Pro or Auto attack.\n" ..
+          "- ESP: red boxes you can see through walls, enemies only." },
+        { "Human tab 1/2",
+          "- Pro Player: speed 16.5 normally and 28.4 while RunSystem > Run > Running is on. Enemy hitboxes 8.4. The Jump button has a 1.5s cooldown.\n" ..
+          "- Extreme Hitbox: enemy hitboxes 24, speed 32, jump power 65, gravity 121.\n" ..
+          "- Auto attack: swings when a non-whitelisted enemy is within 11 studs." },
+        { "Human tab 2/2",
+          "- Bloxy loop: round button with a lock icon. The lock goes away within 30 studs of the spot. Tap to repeat the Bloxy combo nonstop, tap again to stop.\n" ..
+          "- Instant grab: round button, faded until you hold Grab. Tap to teleport to the grab spot.\n" ..
+          "- Items + Instant get: pick items in the dropdown, turn Instant get on. You stand on each item and trigger it every 0.1s until you own that tool, then it moves on to the next. Not linked to Auto pickup." },
+        { "Help",
+          "- Teams must be named exactly Human and Infected.\n" ..
+          "- Copy Discord (How to Setup) copies the server invite.\n" ..
+          "- Delete (top right) removes this book. Press Book again to reopen it.\n" ..
+          "- Credits: @NormalPlayer-o8z" },
+    }
+    local book, dragConn
+
+    closeBook = function()
+        if dragConn then dragConn:Disconnect() dragConn = nil end
+        if book then book:Destroy() book = nil end
+    end
+
+    openBook = function()
+        if book and book.Parent then return end
+        local page = 1
+        book = make("Frame", {
+            Name = "Book", Size = UDim2.fromOffset(340, 270), AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = Color3.new(1, 1, 1),
+            BorderSizePixel = 0, ZIndex = 40,
+        }, gui)
+        corner(book, UDim.new(0, 14))
+        make("UIGradient", { Color = ColorSequence.new(C.bg1, C.bg2), Rotation = 65 }, book)
+        stroke(book, C.cyan, 2, 0.1)
+
+        local head = make("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, ZIndex = 41 }, book)
+        make("TextLabel", {
+            Size = UDim2.new(1, -90, 1, 0), Position = UDim2.fromOffset(14, 0), BackgroundTransparency = 1,
+            Text = "BOOK", Font = Enum.Font.GothamBlack, TextSize = 16, TextColor3 = C.cyan,
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 41,
+        }, head)
+        dragConn = makeDraggable(book, head)
+
+        local function btn(text, w, pos, anchor, color)
+            local b = make("TextButton", {
+                Size = UDim2.fromOffset(w, 28), Position = pos, AnchorPoint = anchor,
+                BackgroundColor3 = C.row, BackgroundTransparency = 0.15, Text = text,
+                Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = color or C.text,
+                AutoButtonColor = false, ZIndex = 42,
+            }, book)
+            corner(b, UDim.new(0, 8))
+            return b
+        end
+        local del  = btn("Delete", 62, UDim2.new(1, -10, 0, 4), Vector2.new(1, 0), C.pink)
+        local prev = btn("< Prev", 70, UDim2.new(0, 12, 1, -10), Vector2.new(0, 1))
+        local nxt  = btn("Next >", 70, UDim2.new(1, -12, 1, -10), Vector2.new(1, 1))
+        local counter = make("TextLabel", {
+            Size = UDim2.fromOffset(80, 28), AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -10), BackgroundTransparency = 1, Text = "",
+            Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.text, ZIndex = 42,
+        }, book)
+        local body = make("TextLabel", {
+            Size = UDim2.new(1, -28, 1, -88), Position = UDim2.fromOffset(14, 40),
+            BackgroundTransparency = 1, Text = "", RichText = true, TextWrapped = true, TextScaled = true,
+            Font = Enum.Font.Gotham, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 42,
+        }, book)
+        make("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 8 }, body)
+
+        local function render()
+            local pg = PAGES[page]
+            body.Text = '<b><font color="#00e1ff">' .. pg[1] .. '</font></b>\n\n' .. pg[2]
+            counter.Text = page .. " / " .. #PAGES
+            prev.TextTransparency = (page == 1) and 0.6 or 0
+            nxt.TextTransparency = (page == #PAGES) and 0.6 or 0
+        end
+        prev.Activated:Connect(function()
+            if page > 1 then
+                page = page - 1
+                render()
+            end
+        end)
+        nxt.Activated:Connect(function()
+            if page < #PAGES then
+                page = page + 1
+                render()
+            end
+        end)
+        del.Activated:Connect(closeBook)
+        render()
+    end
+end
+
+-- Human tab: Auto attack, Bloxy loop, Instant grab, Instant get
+local H = { autoOn = false, getOn = false, bxLoop = false, bxNear = false, lastAuto = 0, lastGet = 0, lastUi = 0 }
+
+-- Auto attack: swing when a non-whitelisted enemy is within 11 studs
+function H.autoStep(myHrp)
+    local _, aHrp, aDist = nearestEnemy(myHrp, true)
+    if aHrp and aDist <= CFG.AutoAttackRange then
+        local now = os.clock()
+        if now - H.lastAuto >= CFG.SwingDelay then
+            H.lastAuto = now
+            swing()
+        end
+    end
+end
+
+-- Bloxy loop: the lock icon disappears within 30 studs of the spot; tap = repeat the Bloxy sequence, tap again = stop
+function H.refreshBx()
+    local btn = bxLoopCircle.Button
+    if not H.bxNear then
+        btn.Text, btn.TextSize = "\u{1F512}", 26
+    else
+        btn.TextSize = 12
+        btn.Text = H.bxLoop and "STOP" or "LOOP"
+    end
+end
+
+function H.bxLoopStart()
+    if H.bxLoop then return end
+    H.bxLoop = true
+    H.refreshBx()
+    task.spawn(function()
+        while H.bxLoop do
+            local t0 = os.clock()
+            local hum, char = getHum(), LP.Character
+            local bp = LP:FindFirstChildOfClass("Backpack")
+            if hum and char and bp and not bloxyBusy then
+                bloxyBusy = true
+                bloxySequence(hum, char, bp)
+                bloxyBusy = false
+            end
+            while H.bxLoop and os.clock() - t0 < CFG.BloxyCooldown do task.wait(0.1) end
+        end
+        H.refreshBx()
+    end)
+end
+
+function H.bxLoopStop()
+    H.bxLoop = false
+    H.refreshBx()
+end
+
+function H.setBxLoop(on)
+    rowBxLoop.SetOn(on)
+    bxLoopCircle.Button.Visible = on
+    if on then
+        local hrp = getHRP()
+        H.bxNear = hrp ~= nil and (hrp.Position - CFG.BloxyLoopPos).Magnitude <= CFG.BloxyLoopRadius
+    else
+        H.bxLoop = false
+    end
+    H.refreshBx()
+end
+
+-- Instant grab: the circle stays faded until the Grab tool is equipped, then tap = teleport
+function H.grabEquipped()
+    local c = LP.Character
+    local t = c and c:FindFirstChild("Grab")
+    return t ~= nil and t:IsA("Tool")
+end
+
+function H.grabUse()
+    if not H.grabEquipped() then return end
+    local hrp = getHRP()
+    if not hrp then return end
+    bypassIgnoreUntil = os.clock() + 1.5
+    hrp.CFrame = CFG.GrabCFrame
+    hrp.AssemblyLinearVelocity = Vector3.zero
+end
+
+function H.setGrab(on)
+    rowGrab.SetOn(on)
+    grabCircle.Button.Visible = on
+    grabCircle.SetGhost(on and not H.grabEquipped() or false)
+end
+
+-- Instant get: stand on every picked item (workspace.PickItem) and fire its prompts every 0.1s,
+-- skip an item once a tool with the same name is in the backpack; independent of Auto pickup
+function H.itemPos(inst)
+    if inst:IsA("BasePart") then return inst.Position end
+    if inst:IsA("Model") then return inst:GetPivot().Position end
+    local part = inst:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position
+end
+
+function H.itemPrompts(inst)
+    local list = {}
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then list[#list + 1] = d end
+    end
+    return list
+end
+
+function H.getStep(myHrp)
+    local now = os.clock()
+    if now - H.lastGet >= CFG.GetInterval then
+        H.lastGet = now
+        local picked = {}
+        for name in pairs(pickDrop.Selected) do picked[#picked + 1] = name end
+        table.sort(picked, function(a, b) return string.lower(a) < string.lower(b) end)
+
+        local owned = ownedTools()
+        H.target = nil
+        local folder = workspace:FindFirstChild("PickItem")
+        if folder then
+            for _, name in ipairs(picked) do
+                if not owned[norm(name)] then
+                    local best, bestD
+                    for _, ch in ipairs(folder:GetChildren()) do
+                        if ch.Name == name then
+                            local pos = H.itemPos(ch)
+                            if pos then
+                                local d = (pos - myHrp.Position).Magnitude
+                                if not bestD or d < bestD then best, bestD = ch, d end
+                            end
+                        end
+                    end
+                    if best then
+                        H.target = best
+                        break
+                    end
+                end
+            end
+        end
+        if H.target then
+            for _, pr in ipairs(H.itemPrompts(H.target)) do
+                if pr.Enabled then firePrompt(pr) end
+            end
+        end
+    end
+
+    -- lock on the item's position every frame
+    local t = H.target
+    if t and t.Parent then
+        local pos = H.itemPos(t)
+        if pos then
+            bypassIgnoreUntil = now + 1
+            myHrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+            myHrp.AssemblyLinearVelocity = Vector3.zero
+        end
+    end
+end
+
+function H.setGet(on)
+    H.getOn = on
+    H.target = nil
+    rowGet.SetOn(on)
+end
+
+function H.setAuto(on)
+    H.autoOn = on
+    rowAuto.SetOn(on)
+end
+
+local function humanStep(hum, myHrp)
+    if H.autoOn then H.autoStep(myHrp) end
+    if H.getOn then H.getStep(myHrp) end
+    local now = os.clock()
+    if now - H.lastUi >= 0.2 then
+        H.lastUi = now
+        if bxLoopCircle.Button.Visible then
+            local near = (myHrp.Position - CFG.BloxyLoopPos).Magnitude <= CFG.BloxyLoopRadius
+            if near ~= H.bxNear then
+                H.bxNear = near
+                if not near then H.bxLoop = false end
+                H.refreshBx()
+            end
+        end
+        if grabCircle.Button.Visible then grabCircle.SetGhost(not H.grabEquipped()) end
+    end
+end
+
+---------------------------------------------------------------- MAIN LOOP
+local lastSwing = 0
+track(RunService.Heartbeat:Connect(function()
+    if npcOn then applyNpcHitbox() end
+    if pathOn then
+        local pt = os.clock()
+        if pt - lastPathScan >= 0.5 then
+            lastPathScan = pt
+            pathStep()
+        end
+    end
+
+    if espOn then
+        local et = os.clock()
+        if et - lastEspScan >= 0.4 then
+            lastEspScan = et
+            espStep()
+        end
+    end
+
+    local hum, myHrp = getHum(), getHRP()
+    if not (hum and myHrp) then return end
+
+    if bypassOn then bypassStep(hum, myHrp) end
+    humanStep(hum, myHrp)
+
+    local mode = activeMode()
+    if mode then
+        local cfg = CFG[mode]
+        local speed = cfg.Speed
+        if mode == "ProPlayer" then
+            speed = MX.isRunning() and cfg.RunSpeed or cfg.IdleSpeed
+            MX.jumpGuard(hum)
+        elseif mode == "Extreme" then
+            MX.applyExtreme(hum)
+        end
+        if hum.WalkSpeed ~= speed then hum.WalkSpeed = speed end -- loop speed
+        applyHitbox(cfg.Hitbox)                                   -- loop hitbox
+    end
+
+    if pickupOn then
+        local t = os.clock()
+        if t - lastPickupScan >= 0.25 then
+            lastPickupScan = t
+            pickupStep(myHrp)
+        end
+    end
+
+    if not (mode or followActive) then return end
+
+    -- swing when a non-whitelisted enemy is within 8 studs
+    if mode and not CFG[mode].NoSwing then
+        local _, sHrp, sDist = nearestEnemy(myHrp, true)
+        if sHrp and sDist <= CFG.SwingRange then
+            local now = os.clock()
+            if now - lastSwing >= CFG.SwingDelay then
+                lastSwing = now
+                swing()
+            end
+        end
+    end
+
+    if not followActive then return end
+    local _, tHrp, dist = nearestEnemy(myHrp)
+    if not tHrp then return end
+
+    -- follow nearest enemy
+    if followActive then
+        if dist > CFG.FollowStop then
+            hum:MoveTo(tHrp.Position)
+        else
+            hum:MoveTo(myHrp.Position)
+        end
+        if dist <= CFG.SwingRange + 4 then
+            local mp, tp = myHrp.Position, tHrp.Position
+            local flat = Vector3.new(tp.X - mp.X, 0, tp.Z - mp.Z)
+            if flat.Magnitude > 0.5 then
+                myHrp.CFrame = CFrame.lookAt(mp, Vector3.new(tp.X, mp.Y, tp.Z))
+            end
+        end
+    end
+end))
+
+---------------------------------------------------------------- WIRING
+rows.Heresy.Button.Activated:Connect(function() setMode("Heresy", not state.Heresy) end)
+rows.Pro.Button.Activated:Connect(function() setMode("Pro", not state.Pro) end)
+
+rowDash.Button.Activated:Connect(function()
+    local on = not dashCircle.Button.Visible
+    dashCircle.Button.Visible = on
+    rowDash.SetOn(on)
+end)
+rowDash.Lock.Activated:Connect(function()
+    dashCircle.SetLocked(not dashCircle.Locked)
+    setLockText(rowDash, dashCircle.Locked)
+end)
+dashCircle.Button.Activated:Connect(function()
+    if dashCircle.Locked then task.spawn(dash) end
+end)
+
+rowDel.Button.Activated:Connect(function()
+    local ok = pcall(function()
+        game:GetService("Players").LocalPlayer.PlayerGui.TopbarStandard:Destroy()
+    end)
+    rowDel.Flash(ok and "DONE" or "N/A")
+end)
+
+rowFollow.Button.Activated:Connect(function()
+    setFollowEnabled(not followCircle.Button.Visible)
+end)
+rowFollow.Lock.Activated:Connect(function()
+    followCircle.SetLocked(not followCircle.Locked)
+    setLockText(rowFollow, followCircle.Locked)
+end)
+followCircle.Button.Activated:Connect(function()
+    if followCircle.Locked then setFollowActive(not followActive) end
+end)
+
+rowTP.Button.Activated:Connect(function()
+    local on = not tpCircle.Button.Visible
+    tpCircle.Button.Visible = on
+    rowTP.SetOn(on)
+end)
+rowTP.Lock.Activated:Connect(function()
+    tpCircle.SetLocked(not tpCircle.Locked)
+    setLockText(rowTP, tpCircle.Locked)
+end)
+tpCircle.Button.Activated:Connect(function()
+    if tpCircle.Locked then task.spawn(runTeleport) end
+end)
+
+rowNpc.Button.Activated:Connect(function() setNpc(not npcOn) end)
+rowPath.Button.Activated:Connect(function() setPath(not pathOn) end)
+
+rowDelJump.Button.Activated:Connect(function()
+    local ok = pcall(function()
+        workspace.Characters[LP.Name].JumpCooldown:Destroy()
+    end)
+    rowDelJump.Flash(ok and "DONE" or "N/A")
+end)
+
+rowBypass.Button.Activated:Connect(function() setBypass(not bypassOn) end)
+
+rowBloxy.Button.Activated:Connect(function()
+    local on = not bloxyCircle.Button.Visible
+    bloxyCircle.Button.Visible = on
+    rowBloxy.SetOn(on)
+end)
+rowBloxy.Lock.Activated:Connect(function()
+    bloxyCircle.SetLocked(not bloxyCircle.Locked)
+    setLockText(rowBloxy, bloxyCircle.Locked)
+end)
+bloxyCircle.Button.Activated:Connect(function()
+    if bloxyCircle.Locked then task.spawn(bloxyCombo) end
+end)
+
+
+rowDiscord.Button.Activated:Connect(function()
+    local copy = setclipboard or toclipboard or (Clipboard and Clipboard.set)
+    local ok = copy and pcall(copy, CFG.DiscordLink)
+    rowDiscord.Flash(ok and "DONE" or "N/A", 1.5)
+end)
+
+rowReset.Button.Activated:Connect(function()
+    for _, c in ipairs(circles) do c.ResetPosition() end
+    savePositions()
+    rowReset.Flash("DONE")
+end)
+rowEsp.Button.Activated:Connect(function() setEsp(not espOn) end)
+
+rows.ProPlayer.Button.Activated:Connect(function() setMode("ProPlayer", not state.ProPlayer) end)
+rows.Extreme.Button.Activated:Connect(function() setMode("Extreme", not state.Extreme) end)
+rowAuto.Button.Activated:Connect(function() H.setAuto(not H.autoOn) end)
+
+rowBxLoop.Button.Activated:Connect(function() H.setBxLoop(not bxLoopCircle.Button.Visible) end)
+rowBxLoop.Lock.Activated:Connect(function()
+    bxLoopCircle.SetLocked(not bxLoopCircle.Locked)
+    setLockText(rowBxLoop, bxLoopCircle.Locked)
+end)
+bxLoopCircle.Button.Activated:Connect(function()
+    if bxLoopCircle.Locked and H.bxNear then
+        if H.bxLoop then H.bxLoopStop() else H.bxLoopStart() end
+    end
+end)
+
+rowGrab.Button.Activated:Connect(function() H.setGrab(not grabCircle.Button.Visible) end)
+rowGrab.Lock.Activated:Connect(function()
+    grabCircle.SetLocked(not grabCircle.Locked)
+    setLockText(rowGrab, grabCircle.Locked)
+end)
+grabCircle.Button.Activated:Connect(function()
+    if grabCircle.Locked then H.grabUse() end
+end)
+
+rowGet.Button.Activated:Connect(function() H.setGet(not H.getOn) end)
+
+rowBook.Button.Activated:Connect(function() openBook() end)
+
+track(Players.PlayerAdded:Connect(function() wlDrop.Refresh() end))
+track(Players.PlayerRemoving:Connect(function() task.defer(wlDrop.Refresh) end))
+rowPickup.Button.Activated:Connect(function() setPickup(not pickupOn) end)
+
+local minimized = false
+btnMin.Activated:Connect(function()
+    minimized = not minimized
+    btnMin.Text = minimized and "+" or "-"
+    TweenService:Create(panel, TweenInfo.new(0.2, Enum.EasingStyle.Quad),
+        { Size = UDim2.fromOffset(PANEL_W, minimized and 38 or PANEL_H) }):Play()
+end)
+
+local function cleanup()
+    state.Heresy, state.Pro, state.ProPlayer, state.Extreme, followActive = false, false, false, false, false
+    H.autoOn, H.getOn, H.bxLoop = false, false, false
+    pcall(MX.clearJumpGuard)
+    pcall(MX.restoreExtreme)
+    pcall(setPickup, false)
+    pcall(setNpc, false)
+    pcall(setPath, false)
+    pcall(setEsp, false)
+    pcall(closeBook)
+    bypassOn = false
+    restoreHitbox()
+    local hum = getHum()
+    if hum and origSpeed then hum.WalkSpeed = origSpeed end
+    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    gui:Destroy()
+    env.CosmosCleanup = nil
+end
+env.CosmosCleanup = cleanup
+btnClose.Activated:Connect(cleanup)
+
+---------------------------------------------------------------- START
+showTab("Main")
+H.refreshBx()
+dashCircle.Button.Visible = true -- Dash circle starts visible so you can place it
+rowDash.SetOn(true)
